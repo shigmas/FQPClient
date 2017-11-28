@@ -1,0 +1,12 @@
+#ifndef FQPCLIENT_GLOBAL_H
+#define FQPCLIENT_GLOBAL_H
+
+#include <QtCore/qglobal.h>
+
+#if defined(FQPCLIENT_LIBRARY)
+#  define FQPCLIENTSHARED_EXPORT Q_DECL_EXPORT
+#else
+#  define FQPCLIENTSHARED_EXPORT Q_DECL_IMPORT
+#endif
+
+#endif // FQPCLIENT_GLOBAL_H
