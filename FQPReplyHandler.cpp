@@ -27,7 +27,6 @@ FQPReplyHandler::FQPReplyHandler(const QStringList *resultParameters,
 
 FQPReplyHandler::~FQPReplyHandler()
 {
-    qDebug() << "~FQPReplyHandler: goodbye";
     delete _reply;
 }
 
@@ -46,12 +45,10 @@ FQPReplyHandler::Request(QNetworkAccessManagerSharedPtr accessManager,
                      &QNetworkAccessManager::authenticationRequired,
                      this,
                      &FQPReplyHandler::_OnAuthenticationRequired);
-    qDebug() << "Sending request";
     _reply = accessManager->sendCustomRequest(request->GetRequest(),
                                               request->GetMethod(),
                                               request->GetContent());
     //request->GetContent());
-    qDebug() << "Request sent. connecting for reply";
     _buffer.clear();
     // QNetworkReply signals
     QObject::connect(_reply, static_cast<void(QNetworkReply::*)(QNetworkReply::NetworkError)>(&QNetworkReply::error),
@@ -84,7 +81,6 @@ FQPReplyHandler::_OnAuthenticationRequired(QNetworkReply * ,
 void
 FQPReplyHandler::_OnFinished()
 {
-    qDebug() << "FQPReplyHandler::_OnFinished";
     if (_reply->error() == QNetworkReply::ProtocolUnknownError) {
         // Start a new request
         QVariant locationHeader = _reply->header(QNetworkRequest::LocationHeader);
@@ -104,7 +100,6 @@ FQPReplyHandler::_OnFinished()
 void
 FQPReplyHandler::_OnBytesReceived(qint64 bytesReceived, qint64 /*bytesTotal*/)
 {
-    qDebug() << "FQPReplyHandler::_OnBytesReceived";
     if (bytesReceived <= 0) {
         qDebug() << "Nothing to read";
         return;
@@ -126,7 +121,6 @@ FQPReplyHandler::_OnBytesReceived(qint64 bytesReceived, qint64 /*bytesTotal*/)
 void
 FQPReplyHandler::_OnReadyRead()
 {
-    qDebug() << "FQPReplyHandler::_OnReadyRead()";
     // We hack a little here, since this is a GET handler, which is only used for
     // single requests (not the check, then fetch), so we assume that the caller
     // wants to get this request and there isn't a fetch coming.
@@ -209,7 +203,6 @@ FQPReplyHandler::_EmitResults() {
         QVariantMap jsonObj = jsonDoc.object().toVariantMap();
         QVariantList vals;
         QStringList::const_iterator paramIterator;
-        qDebug() << "Pulling " << _resultParameters << " out of results";
         for (paramIterator = _resultParameters.constBegin() ;
              paramIterator != _resultParameters.constEnd() ;
              ++paramIterator) {

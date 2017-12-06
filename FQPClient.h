@@ -166,6 +166,34 @@ public:
         reply->Request(_accessManager, request);
     }
 
+    template <typename S,
+              typename T,
+              typename U,
+              typename V>
+    void Fetch(const QString& command,
+               const QByteArray& method,
+               const QJsonObject& parameters,
+               const QStringList* resultParameters,
+               std::function<void (S, T, U, V)> handler) {
+        FQPRequestSharedPtr request = _BuildRequest(command, method,
+                                                    parameters);
+        qDebug() << "(four arg version)URL: " << request->GetRequest().url();
+        FQPReplyHandler *reply = new FQPReplyHandler(resultParameters);
+        _handlers.append(FQPReplyHandlerSharedPtr(reply));
+        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
+                [request, reply, handler] (const QVariantList& results) {
+                    // Only one element
+                    qDebug() << "Request completed. handling "
+                             << results.size();
+                    S v0 = FQPType_GetValueFromVariant<S>(results[0]);
+                    T v1 = FQPType_GetValueFromVariant<T>(results[1]);
+                    U v2 = FQPType_GetValueFromVariant<U>(results[2]);
+                    V v3 = FQPType_GetValueFromVariant<U>(results[3]);
+                    handler(v0, v1, v2, v3);
+                });
+        reply->Request(_accessManager, request);
+    }
+
 signals:
 
 protected slots:
