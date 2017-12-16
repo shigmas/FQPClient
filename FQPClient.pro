@@ -5,11 +5,9 @@
 #-------------------------------------------------
 
 QT       += network
-
 QT       -= gui
 
-# XXX - figure out how to do this dynamically!!
-#CONFIG += staticlib
+CONFIG += c++11
 
 TARGET = FQPClient
 TEMPLATE = lib
@@ -39,11 +37,18 @@ HEADERS +=\
         FQPReplyHandler.h \
         FQPRequest.h \
 
-unix:!macx {
-    target.path = /usr/lib
-    INSTALLS += target
-}
+android {
+    CONFIG -= shared
+    CONFIG += static
 
+    headers.path = $$OUT_PWD/../include
+    headers.files = $$HEADERS
+    libs.path = $$OUT_PWD/../lib
+    # The ./ is necessary, or we'll copy from the location of the .pro file.
+    libs.files = ./libFQPClient.a
+    INSTALLS += headers
+    INSTALLS += libs
+}
 
 macx|ios: {
     message("OS X and iOS")
