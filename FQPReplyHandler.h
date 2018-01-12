@@ -23,19 +23,22 @@ class FQPReplyHandler : public QObject
     Q_OBJECT
 public:
     // Takes a list of result parameters to pull out of 
-    explicit FQPReplyHandler(const QStringList *resultParameters = NULL,
+    explicit FQPReplyHandler(QNetworkAccessManagerPtr accessManager,
+                             FQPRequestPtr request,
+                             const QStringList *resultParameters = NULL,
                              QObject *parent = 0);
 
-    ~FQPReplyHandler();
+    virtual ~FQPReplyHandler();
 
-    bool Request(QNetworkAccessManagerSharedPtr accessManager,
-                 FQPRequestSharedPtr request);
-    
+    Q_INVOKABLE void Request();
+
 signals:
     void CSRFTokenUpdated(const QByteArray& token);    
     // One of these will be sent upon completion.
-    void InterpretedReplyReceived(const QVariantList& parameters);
-    void RawReplyReceived(const QJsonDocument& data);
+    void InterpretedReplyReceived(QNetworkReply::NetworkError error,
+                                  const QVariantList& parameters);
+    void RawReplyReceived(QNetworkReply::NetworkError error,
+                          const QJsonDocument& data);
 
 protected:
     enum ResultsFormat {
@@ -51,6 +54,7 @@ protected:
 protected slots:
     virtual void _OnAuthenticationRequired(QNetworkReply * reply,
                                            QAuthenticator * authenticator);
+    virtual void _OnAccessManagerFinished(QNetworkReply * reply);
     virtual void _OnFinished();
     virtual void _OnBytesReceived(qint64 bytesReceived, qint64 bytesTotal);
     virtual void _OnReadyRead();
@@ -62,12 +66,13 @@ protected slots:
 private:
     ResultsFormat _resultsFormat;
     QStringList _resultParameters;
-    QNetworkAccessManagerSharedPtr _accessManager;
-    FQPRequestSharedPtr _request;
+    QNetworkAccessManagerPtr _accessManager;
+    FQPRequestPtr _request;
     QNetworkReply *_reply;
 
     QByteArray _buffer;
     qint64 _bufferSize;
+    bool _completed;
 };
 
 #endif // FQPREPLYHANDLER_H

@@ -9,6 +9,7 @@ FQPRequest::FQPRequest(const QUrl& url,
                        const QByteArray& method,
                        const QJsonObject& content,
                        const QByteArray& csrfToken) :
+    QObject(),
     _method(method)
 {
     _request = QNetworkRequest(url);
@@ -29,7 +30,6 @@ FQPRequest::FQPRequest(const QUrl& url,
 
 FQPRequest::~FQPRequest()
 {
-    //
 }
 
 QNetworkRequest

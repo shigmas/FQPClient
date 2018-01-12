@@ -5,12 +5,14 @@
 
 #include <QJsonObject>
 #include <QNetworkRequest>
+#include <QObject>
 #include <QUrl>
 
 FQP_DECLARE_PTRS(QHttpMultiPart)
 
-class FQPRequest
+class FQPRequest: public QObject
 {
+    Q_OBJECT
 public:
     explicit FQPRequest(const QUrl& url,
                         const QByteArray& method,

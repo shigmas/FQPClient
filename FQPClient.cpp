@@ -2,39 +2,71 @@
 
 #include "FQPRequest.h"
 
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QNetworkAccessManager>
 
 const QByteArray FQPClient::CSRFCookieName = "csrftoken";
 const QByteArray FQPClient::CSRFHeaderName = "X-CSRFTOKEN";
 
-FQPClient::FQPClient(const QString& host,
-                     const QString& basePath,
-                     const QString& scheme,
-                     QObject *parent)
-    : QObject(parent),
-    _accessManager(new QNetworkAccessManager())
+FQPClient::FQPClient(const QUrl& baseUrl, QObject *parent) :
+    QThread(parent),
+    _baseUrl(baseUrl),
+    _accessManager(_InitAccessManager())
 {
-    // We could just call the other constructor, but we need to do some
-    // verification of the arguments
-    if ((scheme != "http") || (scheme != "https")) {
-        throw FQPUrlException("Invalid scheme");
-    }
-
-    if (basePath.at(0) == '/') {
-        _baseUrl = scheme + "://" + host + basePath;
-    } else {
-        _baseUrl = scheme + "://" + host + "/" + basePath;
-    }
     _AppendSlashToBaseIfNecessary();
 }
 
-
-FQPClient::FQPClient(const QUrl& baseUrl, QObject *parent) :
-    QObject(parent),
-    _baseUrl(baseUrl),
-    _accessManager(new QNetworkAccessManager())
+void
+FQPClient::run()
 {
-    _AppendSlashToBaseIfNecessary();
+    // We just re-initialize the access manager so it "belongs" to the
+    // new thread.
+    _accessManager = _InitAccessManager();
+    // _eventLoop->exec();
+    exec();
+}
+
+bool
+FQPClient::IsNetworkAccessible() const
+{
+    return _accessManager->networkAccessible() ==
+        QNetworkAccessManager::Accessible;
+}
+
+QNetworkAccessManagerSharedPtr
+FQPClient::_InitAccessManager()
+{
+    QNetworkAccessManager* accessManager = new QNetworkAccessManager();
+
+    connect(accessManager,
+            &QNetworkAccessManager::networkAccessibleChanged,
+            this, &FQPClient::_OnNetworkAccessibleChanged);
+
+    return QNetworkAccessManagerSharedPtr(accessManager);
+}
+
+void
+FQPClient::_QueueRequest(const FQPRequestSharedPtr& request,
+                         const FQPReplyHandlerSharedPtr& reply)
+{
+    _requestQueue.enqueue(std::make_pair(request, reply));
+    QThread* accessManagerThread = _accessManager->thread();
+
+    connect(reply.get(),&FQPReplyHandler::CSRFTokenUpdated,
+            this, &FQPClient::_OnCSRFTokenUpdated);
+    if (accessManagerThread != thread()) {
+        // If we're not multithreaded, moving the thread is a noop, but let's
+        // save a little work and only move if we're in a thread.
+        qDebug() << "request and reply in different thread. Moving";
+        reply->moveToThread(accessManagerThread);
+        request->moveToThread(accessManagerThread);
+        // Run the request in a separate thread.
+        QMetaObject::invokeMethod(reply.get(),"Request", Qt::AutoConnection);
+    } else {
+        reply->Request();
+    }
+
 }
 
 void
@@ -73,3 +105,16 @@ FQPClient::_BuildRequest(const QString& command,
     return FQPRequestSharedPtr(new FQPRequest(requestUrl, method, content,
                                               _csrfToken));
 }
+
+void
+FQPClient::_OnNetworkAccessibleChanged(QNetworkAccessManager::NetworkAccessibility accessibility)
+{
+    qDebug() << "FQPClient::_OnNetworkAccessibleChanged(): " << accessibility;
+}
+
+ void
+ FQPClient::_OnCSRFTokenUpdated(const QByteArray& token)
+ {
+     _csrfToken = token;
+ }
+

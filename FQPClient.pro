@@ -50,14 +50,39 @@ android {
     INSTALLS += libs
 }
 
-macx|ios: {
-    message("OS X and iOS")
+macx {
     CONFIG += shared
-    CONFIG += lib_bundle
+    #CONFIG += staticlib
     FRAMEWORK_HEADERS.version = Versions
-    FRAMEWORK_HEADERS.files = $${HEADERS}
-    FRAMEWORK_HEADERS.path = Headers
-    QMAKE_BUNDLE_DATA += FRAMEWORK_HEADERS
+}
+
+ios {
+    message("ios")
+    #CONFIG += shared
+    CONFIG += staticlib
+    CONFIG += framework
+
+    QMAKE_IOS_DEPLOYMENT_TARGET = 10
+    QMAKE_FRAMEWORK_BUNDLE_NAME = $$LIBRARY_NAME
+}
+
+macx|ios: {
+    CONFIG += lib_bundle
+    # FRAMEWORK_HEADERS.files = $${HEADERS}
+    # FRAMEWORK_HEADERS.path = Headers
+    # QMAKE_BUNDLE_DATA += FRAMEWORK_HEADERS
+
+    # If we're static but a bundle, we want to copy files to a framework
+    # directory.
+    CONFIG(staticlib, shared|staticlib){
+        message("Adding copy for static framework")
+        # (using QMAKE_EXTRA_TARGET will be executed before linking, which is
+        # too early).
+        QMAKE_POST_LINK += mkdir -p $${TARGET}.framework/Headers && \
+            $$QMAKE_COPY $$PWD/*.h $${TARGET}.framework/Headers && \
+            $$QMAKE_COPY $$OUT_PWD/lib$${TARGET}.a $${TARGET}.framework/$${TARGET} && \
+            $$QMAKE_RANLIB -s $${TARGET}.framework/$${TARGET}
+    }
 }
 
 DISTFILES += \

@@ -7,10 +7,12 @@
 #include "FQPRequest.h"
 #include "FQPTypes.h"
 
+#include <QThread>
 // Network stuff
 #include <QString>
 #include <QUrl>
 
+#include <QQueue>
 #include <QVector>
 
 // JSON stuff
@@ -19,11 +21,13 @@
 
 #include <functional>
 
-FQP_DECLARE_PTRS(QNetworkAccessManager);
-FQP_DECLARE_PTRS(FQPReplyHandler);
-FQP_DECLARE_PTRS(FQPRequest);
+FQP_DECLARE_PTRS(QNetworkAccessManager)
+FQP_DECLARE_PTRS(QEventLoop)
+FQP_DECLARE_PTRS(FQPReplyHandler)
+FQP_DECLARE_PTRS(FQPRequest)
 
-class FQPClient : public QObject
+// Inherited from thread, but we don't have to run as a thread.
+class FQPClient : public QThread
 {
     Q_OBJECT
 
@@ -31,16 +35,14 @@ public:
     static const QByteArray CSRFCookieName;
     static const QByteArray CSRFHeaderName;
 
-    // Constructs a client to communicate with the host (and port) and
-    // the initial part of the URL specified by baseUrl. The scheme may
-    // by regular http or https.
-    explicit FQPClient(const QString& host,
-                       const QString& basePath,
-                       const QString& scheme,
-                       QObject *parent = 0);
+    // Only necessary to call if we want to run this in a separate thread.
+    // XXX - This seems like it works in the simulator, but not iOS.
+    virtual void run() override;
 
     // Constructs a client to communicate with the base URL.
     explicit FQPClient(const QUrl& baseUrl, QObject *parent = 0);
+
+    bool IsNetworkAccessible() const;
 
     // Makes a request with the command to be appended to the baseUrl.
     // The method is one of the HTTP methods.
@@ -58,20 +60,24 @@ public:
                                                     parameters);
         qDebug() << "raw URL: " << request->GetRequest().url();
         QStringList rawParams;
-        FQPReplyHandler *reply = new FQPReplyHandler(&rawParams);
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request, &rawParams));
         // We need to keep a reference to the reply around. We need some kind of
         // cleanup in the closure to get rid of any resources that were created
         // in this function. We don't care about the parameter passed in from the
         // signal.
-        connect(reply, &FQPReplyHandler::RawReplyReceived,
-                [request, reply, handler](const QJsonDocument& jsonDoc) {
-                    qDebug() << "Request completed. calling handler";
+        connect(reply.get(), &FQPReplyHandler::RawReplyReceived,
+                [request, reply, handler](QNetworkReply::NetworkError error,
+                                          const QJsonDocument& jsonDoc) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     if (jsonDoc.isEmpty()) {
                         qDebug() << "Is empty";
                     }
                     handler(jsonDoc);  });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
     void Fetch(const QString& command,
@@ -81,17 +87,20 @@ public:
         FQPRequestSharedPtr request = _BuildRequest(command, method,
                                                     parameters);
         qDebug() << "URL: " << request->GetRequest().url();
-        FQPReplyHandler *reply = new FQPReplyHandler();
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request));
         // We need to keep a reference to the reply around. We need some kind of
         // cleanup in the closure to get rid of any resources that were created
         // in this function. We don't care about the parameter passed in from the
         // signal.
-        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
-                [request, reply, handler]() {
-                    qDebug() << "Request completed. calling handler";
+        connect(reply.get(), &FQPReplyHandler::InterpretedReplyReceived,
+                [request, reply, handler](QNetworkReply::NetworkError error) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     handler();  });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
     template <typename S>
@@ -103,17 +112,21 @@ public:
         FQPRequestSharedPtr request = _BuildRequest(command, method,
                                                     parameters);
         qDebug() << "(One arg version)URL: " << request->GetRequest().url();
-        FQPReplyHandler *reply = new FQPReplyHandler(resultParameters);
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
-        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
-                [request, reply, handler] (const QVariantList& results) {
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request,
+                                                         resultParameters));
+        connect(reply.get(), &FQPReplyHandler::InterpretedReplyReceived,
+                [request, reply, handler] (QNetworkReply::NetworkError error,
+                                           const QVariantList& results) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     // Only one element
-                    qDebug() << "Request completed. handling "
-                             << results.size();
                     S val = FQPType_GetValueFromVariant<S>(results[0]);
                     handler(val);
                 });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
     template <typename S,
@@ -126,18 +139,22 @@ public:
         FQPRequestSharedPtr request = _BuildRequest(command, method,
                                                     parameters);
         qDebug() << "(Two arg version)URL: " << request->GetRequest().url();
-        FQPReplyHandler *reply = new FQPReplyHandler(resultParameters);
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
-        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
-                [request, reply, handler] (const QVariantList& results) {
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request,
+                                                         resultParameters));
+        connect(reply.get(), &FQPReplyHandler::InterpretedReplyReceived,
+                [request, reply, handler] (QNetworkReply::NetworkError error,
+                                           const QVariantList& results) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     // Only one element
-                    qDebug() << "Request completed. handling "
-                             << results.size();
                     S v0 = FQPType_GetValueFromVariant<S>(results[0]);
                     T v1 = FQPType_GetValueFromVariant<T>(results[1]);
                     handler(v0, v1);
                 });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
     template <typename S,
@@ -151,19 +168,23 @@ public:
         FQPRequestSharedPtr request = _BuildRequest(command, method,
                                                     parameters);
         qDebug() << "(three arg version)URL: " << request->GetRequest().url();
-        FQPReplyHandler *reply = new FQPReplyHandler(resultParameters);
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
-        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
-                [request, reply, handler] (const QVariantList& results) {
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request,
+                                                         resultParameters));
+        connect(reply.get(), &FQPReplyHandler::InterpretedReplyReceived,
+                [request, handler] (QNetworkReply::NetworkError error,
+                                    const QVariantList& results) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     // Only one element
-                    qDebug() << "Request completed. handling "
-                             << results.size();
                     S v0 = FQPType_GetValueFromVariant<S>(results[0]);
                     T v1 = FQPType_GetValueFromVariant<T>(results[1]);
                     U v2 = FQPType_GetValueFromVariant<U>(results[2]);
                     handler(v0, v1, v2);
                 });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
     template <typename S,
@@ -178,27 +199,35 @@ public:
         FQPRequestSharedPtr request = _BuildRequest(command, method,
                                                     parameters);
         qDebug() << "(four arg version)URL: " << request->GetRequest().url();
-        FQPReplyHandler *reply = new FQPReplyHandler(resultParameters);
-        _handlers.append(FQPReplyHandlerSharedPtr(reply));
-        connect(reply, &FQPReplyHandler::InterpretedReplyReceived,
-                [request, reply, handler] (const QVariantList& results) {
+        FQPReplyHandlerSharedPtr reply =
+            FQPReplyHandlerSharedPtr(new FQPReplyHandler(_accessManager,
+                                                         request,
+                                                         resultParameters));
+        connect(reply.get(), &FQPReplyHandler::InterpretedReplyReceived,
+                [request, reply, handler] (QNetworkReply::NetworkError error,
+                                           const QVariantList& results) {
+                    if (error != QNetworkReply::NoError) {
+                        qDebug() << "error: " << error;
+                    }
                     // Only one element
-                    qDebug() << "Request completed. handling "
-                             << results.size();
                     S v0 = FQPType_GetValueFromVariant<S>(results[0]);
                     T v1 = FQPType_GetValueFromVariant<T>(results[1]);
                     U v2 = FQPType_GetValueFromVariant<U>(results[2]);
                     V v3 = FQPType_GetValueFromVariant<U>(results[3]);
                     handler(v0, v1, v2, v3);
                 });
-        reply->Request(_accessManager, request);
+        _QueueRequest(request, reply);
     }
 
 signals:
 
-protected slots:
-
 protected:
+    QNetworkAccessManagerSharedPtr _InitAccessManager();
+
+    void _QueueRequest(const FQPRequestSharedPtr& request,
+                       const FQPReplyHandlerSharedPtr& reply);
+
+
     void _AppendSlashToBaseIfNecessary();
 
     // Build the request with the command and method and content. The request
@@ -209,11 +238,23 @@ protected:
                                       const QByteArray& method,
                                       const QJsonObject& content);
 
+protected slots:
+    virtual void _OnNetworkAccessibleChanged(QNetworkAccessManager::NetworkAccessibility accessibility);
+
+    virtual void _OnCSRFTokenUpdated(const QByteArray& token);
+    
 private:
     QUrl _baseUrl;
     QNetworkAccessManagerSharedPtr _accessManager;
     QByteArray _csrfToken;
-    QVector<FQPReplyHandlerSharedPtr> _handlers;
+
+    // Only valid (and needed) when we run as a separate thread. Thus, it's
+    // the flag for running as a thread.
+    QEventLoopSharedPtr _eventLoop;
+
+    QQueue<std::pair<FQPRequestSharedPtr,
+                     FQPReplyHandlerSharedPtr> > _requestQueue;
 };
 
 #endif // FQPCLIENT_H
+

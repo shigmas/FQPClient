@@ -8,10 +8,20 @@
 #include <QNetworkCookie>
 #include <QNetworkCookieJar>
 #include <QIODevice>
+#include <QThread>
 
-FQPReplyHandler::FQPReplyHandler(const QStringList *resultParameters,
+#include <QCoreApplication>
+
+#include <functional>
+
+FQPReplyHandler::FQPReplyHandler(QNetworkAccessManagerPtr accessManager,
+                                 FQPRequestPtr request,
+                                 const QStringList *resultParameters,
                                  QObject *parent):
-    QObject(parent)
+    QObject(parent),
+    _accessManager(accessManager),
+    _request(request),
+    _completed(false)
 {
     if (resultParameters) {
         if (resultParameters->size() > 0) {
@@ -30,28 +40,29 @@ FQPReplyHandler::~FQPReplyHandler()
     delete _reply;
 }
 
-bool
-FQPReplyHandler::Request(QNetworkAccessManagerSharedPtr accessManager,
-                         FQPRequestSharedPtr request)
+void
+FQPReplyHandler::Request()
 {
     // Store it because we may need to get the information for redirects, etc.
-    if (_request != request) {
-        _request = request;
-    }
-    if (_accessManager != accessManager) {
-        _accessManager = accessManager;
+    QNetworkAccessManagerSharedPtr accessManager = _accessManager.lock();
+    FQPRequestSharedPtr request = _request.lock();
+
+    if (!accessManager || !request) {
+        return;
     }
     QObject::connect(accessManager.get(),
                      &QNetworkAccessManager::authenticationRequired,
                      this,
                      &FQPReplyHandler::_OnAuthenticationRequired);
+    QObject::connect(accessManager.get(),
+                     &QNetworkAccessManager::finished,
+                     this,
+                     &FQPReplyHandler::_OnAccessManagerFinished);
     _reply = accessManager->sendCustomRequest(request->GetRequest(),
                                               request->GetMethod(),
                                               request->GetContent());
-    //request->GetContent());
-    _buffer.clear();
-    // QNetworkReply signals
-    QObject::connect(_reply, static_cast<void(QNetworkReply::*)(QNetworkReply::NetworkError)>(&QNetworkReply::error),
+    QObject::connect(_reply,
+                     static_cast<void(QNetworkReply::*)(QNetworkReply::NetworkError)>(&QNetworkReply::error),
                      this, &FQPReplyHandler::_OnError);
     QObject::connect(_reply, &QNetworkReply::finished,
                      this, &FQPReplyHandler::_OnFinished);
@@ -63,8 +74,10 @@ FQPReplyHandler::Request(QNetworkAccessManagerSharedPtr accessManager,
     // QIODevice signals
     QObject::connect(_reply, &QNetworkReply::readyRead,
                      this, &FQPReplyHandler::_OnReadyRead);
-
-    return true;
+    //    _reply->abort();
+    //request->GetContent());
+    _buffer.clear();
+    // QNetworkReply signals
 }
 
 void
@@ -79,6 +92,17 @@ FQPReplyHandler::_OnAuthenticationRequired(QNetworkReply * ,
 }
 
 void
+FQPReplyHandler::_OnAccessManagerFinished(QNetworkReply * reply)
+{
+    if (reply->error()) {
+        qDebug() << "FQPReplyHandler::_OnAccessManagerFinished() with "
+                 << reply->error();
+        qDebug() << "FQPReplyHandler::_OnAccessManagerFinished() error "
+                 << _buffer;
+    }
+}
+
+void
 FQPReplyHandler::_OnFinished()
 {
     if (_reply->error() == QNetworkReply::ProtocolUnknownError) {
@@ -88,18 +112,23 @@ FQPReplyHandler::_OnFinished()
             throw FQPNetworkException();
         }
         QString locationString = locationHeader.toString();
-        Request(_accessManager, _request);
+        Request();
     } else {
-        _StoreCSRF(_request->GetRequest().url());
-        // Read the rest of the buffer, if there's anything left
+        auto request = _request.lock();
+        if (request) {
+            _StoreCSRF(request->GetRequest().url());
+            // Read the rest of the buffer, if there's anything left
+        }
         _buffer.append(_reply->readAll());
         _EmitResults();
     }
+    _completed = true;
 }
 
 void
 FQPReplyHandler::_OnBytesReceived(qint64 bytesReceived, qint64 /*bytesTotal*/)
 {
+    //qDebug() << "FQPReplyHandler::_OnBytesReceived()" << bytesReceived;
     if (bytesReceived <= 0) {
         qDebug() << "Nothing to read";
         return;
@@ -121,6 +150,7 @@ FQPReplyHandler::_OnBytesReceived(qint64 bytesReceived, qint64 /*bytesTotal*/)
 void
 FQPReplyHandler::_OnReadyRead()
 {
+    qDebug() << "FQPReplyHandler::_OnReadyRead()";
     // We hack a little here, since this is a GET handler, which is only used for
     // single requests (not the check, then fetch), so we assume that the caller
     // wants to get this request and there isn't a fetch coming.
@@ -149,12 +179,15 @@ void
 FQPReplyHandler::_StoreCSRF(const QUrl& baseUrl)
 {
     QNetworkCookie cookie;
-    foreach(cookie, _accessManager->cookieJar()->cookiesForUrl(baseUrl)) {
-        if (cookie.name() == FQPClient::CSRFCookieName) {
-            // Actully, it seems like the manager holds on to this, so as long
-            // as the access manager doesn't go away, no one needs to listen to
-            // this notice.
-            emit CSRFTokenUpdated(cookie.value());
+    auto accessManager = _accessManager.lock();
+    if (accessManager) {
+        foreach(cookie, accessManager->cookieJar()->cookiesForUrl(baseUrl)) {
+            if (cookie.name() == FQPClient::CSRFCookieName) {
+                // Actully, it seems like the manager holds on to this, so as
+                // long as the access manager doesn't go away, no one needs to
+                // listen to this notice.
+                emit CSRFTokenUpdated(cookie.value());
+            }
         }
     }
 }
@@ -163,7 +196,6 @@ QJsonDocument
 FQPReplyHandler::_GetJsonFromContent(const QByteArray& content) const
 {
     if (content.size() <= 0) {
-        qDebug() << "Buffer empty. returning";
         return QJsonDocument();
     }
 
@@ -187,16 +219,16 @@ FQPReplyHandler::_EmitResults() {
     // Does the client care about the data we get back?
     switch (_resultsFormat) {
     case NoResults:
-        emit InterpretedReplyReceived(QVariantList());
+        emit InterpretedReplyReceived(_reply->error(),
+                                      QVariantList());
         break;
     case RawResults:
-        emit RawReplyReceived(jsonDoc);
+        emit RawReplyReceived(_reply->error(), jsonDoc);
         break;
     case InterpretedResults:
         if (jsonDoc.isNull() || jsonDoc.isEmpty()) {
             throw FQPNetworkException();
         }
-        qDebug() << "Results: " << jsonDoc;
         if (!jsonDoc.isObject()) {
             throw FQPNetworkException();
         }
@@ -208,6 +240,6 @@ FQPReplyHandler::_EmitResults() {
              ++paramIterator) {
             vals.append(jsonObj[*paramIterator]);
         }
-        emit InterpretedReplyReceived(vals);
+        emit InterpretedReplyReceived(_reply->error(), vals);
     }
 }
