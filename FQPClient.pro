@@ -45,7 +45,7 @@ android {
     headers.files = $$HEADERS
     libs.path = $$OUT_PWD/../lib
     # The ./ is necessary, or we'll copy from the location of the .pro file.
-    libs.files = ./libFQPClient.a
+    libs.files = $$OUT_PWD/libFQPClient.a
     INSTALLS += headers
     INSTALLS += libs
 }
