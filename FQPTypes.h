@@ -2,6 +2,9 @@
 #define FQPTYPES_H
 
 #include <memory>
+#include <vector>
+#include <map>
+
 #include <QVariant>
 
 class FQPException
@@ -52,7 +55,17 @@ template<typename T> struct FQPDeclarePtrs {
 #define FQP_DECLARE_PTRS(type)    \
     class type;                       \
     typedef FQPDeclarePtrs<class type>::Ptr type##Ptr;             \
-    typedef FQPDeclarePtrs<class type>::SharedPtr type##SharedPtr;
+    typedef FQPDeclarePtrs<class type>::SharedPtr type##SharedPtr; \
+
+#define FQP_DECLARE_PTRS_AND_COLLECTIONS(key, type)  \
+    class type;                       \
+    typedef FQPDeclarePtrs<class type>::Ptr type##Ptr;             \
+    typedef FQPDeclarePtrs<class type>::SharedPtr type##SharedPtr; \
+    typedef std::vector<FQPDeclarePtrs<class type>::SharedPtr> type##SharedVector; \
+    typedef std::vector<FQPDeclarePtrs<class type>::Ptr> type##Vector; \
+    typedef std::map<key, FQPDeclarePtrs<class type>::SharedPtr> type##SharedMap; \
+    typedef std::map<key, FQPDeclarePtrs<class type>::Ptr> type##Map;
+
 
 
 template <typename TYPE>

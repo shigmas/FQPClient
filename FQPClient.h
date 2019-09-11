@@ -44,6 +44,16 @@ public:
 
     bool IsNetworkAccessible() const;
 
+    // Helper for the full function, if we don't have a URL query, and for
+    // backward compatibility. (A default arg makes the API look a little
+    // clunky.)
+    void FetchRaw(const QString& command,
+                  const QByteArray& method,
+                  const QJsonObject& parameters,
+                  std::function<void (const QJsonDocument&)> handler) {
+        FetchRaw(command, "", method, parameters, handler);
+    }
+
     // Makes a request with the command to be appended to the baseUrl.
     // The method is one of the HTTP methods.
     // parameters is the JSON parameters to send as part of the request.
@@ -53,11 +63,13 @@ public:
     // the handler, doing no handling of the results.
     // XXX Quite hacky, but we have to have a version for 1..n arguments.
     void FetchRaw(const QString& command,
+                  const QString& query,
                   const QByteArray& method,
                   const QJsonObject& parameters,
                   std::function<void (const QJsonDocument&)> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
-                                                    parameters);
+        FQPRequestSharedPtr request = _BuildRequest(command, query, method,
+                                                    parameters, false);
+        
         qDebug() << "raw URL: " << request->GetRequest().url();
         QStringList rawParams;
         FQPReplyHandlerSharedPtr reply =
@@ -84,7 +96,7 @@ public:
                const QByteArray& method,
                const QJsonObject& parameters,
                std::function<void ()> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
+        FQPRequestSharedPtr request = _BuildRequest(command, "", method,
                                                     parameters);
         qDebug() << "URL: " << request->GetRequest().url();
         FQPReplyHandlerSharedPtr reply =
@@ -109,7 +121,7 @@ public:
                const QJsonObject& parameters,
                const QStringList* resultParameters,
                std::function<void (S)> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
+        FQPRequestSharedPtr request = _BuildRequest(command, "", method,
                                                     parameters);
         qDebug() << "(One arg version)URL: " << request->GetRequest().url();
         FQPReplyHandlerSharedPtr reply =
@@ -136,7 +148,7 @@ public:
                const QJsonObject& parameters,
                const QStringList* resultParameters,
                std::function<void (S, T)> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
+        FQPRequestSharedPtr request = _BuildRequest(command, "", method,
                                                     parameters);
         qDebug() << "(Two arg version)URL: " << request->GetRequest().url();
         FQPReplyHandlerSharedPtr reply =
@@ -165,7 +177,7 @@ public:
                const QJsonObject& parameters,
                const QStringList* resultParameters,
                std::function<void (S, T, U)> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
+        FQPRequestSharedPtr request = _BuildRequest(command, "", method,
                                                     parameters);
         qDebug() << "(three arg version)URL: " << request->GetRequest().url();
         FQPReplyHandlerSharedPtr reply =
@@ -196,7 +208,7 @@ public:
                const QJsonObject& parameters,
                const QStringList* resultParameters,
                std::function<void (S, T, U, V)> handler) {
-        FQPRequestSharedPtr request = _BuildRequest(command, method,
+        FQPRequestSharedPtr request = _BuildRequest(command, "", method,
                                                     parameters);
         qDebug() << "(four arg version)URL: " << request->GetRequest().url();
         FQPReplyHandlerSharedPtr reply =
@@ -235,9 +247,10 @@ protected:
     // parameters. Otherwise, the request also contains the Http Multipart data
     // containing the JSON body.
     FQPRequestSharedPtr _BuildRequest(const QString& command,
+                                      const QString& query,
                                       const QByteArray& method,
-                                      const QJsonObject& content);
-
+                                      const QJsonObject& content,
+                                      bool appendTrailingSlash=true);
 protected slots:
     virtual void _OnNetworkAccessibleChanged(QNetworkAccessManager::NetworkAccessibility accessibility);
 

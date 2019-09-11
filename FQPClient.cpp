@@ -81,8 +81,10 @@ FQPClient::_AppendSlashToBaseIfNecessary()
 
 FQPRequestSharedPtr
 FQPClient::_BuildRequest(const QString& command,
+                         const QString& query,
                          const QByteArray& method,
-                         const QJsonObject& content)
+                         const QJsonObject& content, 
+                         bool appendTrailingSlash)
 {
     QString requestPath = _baseUrl.path();
     QUrl requestUrl = _baseUrl;
@@ -90,18 +92,21 @@ FQPClient::_BuildRequest(const QString& command,
     // We've already appended '/' to the base. So see if we need to add the '/'
     // to the command.
     requestPath.append(command);
-    if (!command.endsWith("/")) {
+    if (!command.endsWith("/") && appendTrailingSlash) {
         requestPath.append("/");
     }
-    if ((method == "GET") || (method == "get")) {
-        // append the content as query parameters.  Umm... TBD?
-        if (!content.empty()) {
-            qDebug() << "Get requests with content not implemented";
-        }
-    }
+    // if ((method == "GET") || (method == "get")) {
+    //     // append the content as query parameters.  Umm... TBD?
+    //     if (!content.empty()) {
+    //         qDebug() << "Get requests with content not implemented";
+    //     }
+    // }
     
     requestUrl.setPath(requestPath);
 
+    if (!query.isEmpty()) {
+        requestUrl.setQuery(query);
+    }
     return FQPRequestSharedPtr(new FQPRequest(requestUrl, method, content,
                                               _csrfToken));
 }
